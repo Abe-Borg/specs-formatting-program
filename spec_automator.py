@@ -1,29 +1,49 @@
 import re
 import os
 from docx import Document
-from docx.shared import Inches, Pt
 
 # ==========================================
-# CONFIGURATION
+# 🛠️ CONFIGURATION AREA (EDIT THIS PER PROJECT)
 # ==========================================
-INPUT_MASTER = "office_master.docx"       # Your existing spec
-ARCHITECT_TEMPLATE = "architect_style.docx" # The file with correct margins/headers
+
+# INPUTS
+INPUT_MASTER = "office_master.docx"
+ARCHITECT_TEMPLATE = "architect_style.docx"
 OUTPUT_FILE = "Final_Project_Spec.docx"
 TEMP_MARKDOWN = "temp_converted.md"
 
-# Indentation Settings (in Inches)
-# These align with your 2-space, 4-space markdown rules
-INDENT_PER_LEVEL = 0.5 
+# ------------------------------------------
+# 🎨 STYLE MAPPING (The "Translation Layer")
+# ------------------------------------------
+# INSTRUCTIONS: Uncomment the block that matches your current Architect.
+
+# --- OPTION A: THE "CSI LEVEL" ARCHITECT (Your current one) ---
+STYLE_MAP = {
+    "Title":   "CSILevel0",  # Matches # (Section Title)
+    "Part":    "CSILevel1",  # Matches ## (Part 1)
+    "Article": "CSILevel2",  # Matches ### (1.01)
+}
+# Map indent levels to styles: [Level 0 (A.), Level 1 (1.), Level 2 (a.)...]
+LIST_MAP = ["CSILevel3", "CSILevel4", "CSILevel5", "CSILevel6", "CSILevel7"]
+
+
+# --- OPTION B: THE "STANDARD WORD" ARCHITECT (Most others) ---
+# STYLE_MAP = {
+#     "Title":   "Heading 1",
+#     "Part":    "Heading 2",
+#     "Article": "Heading 3",
+# }
+# # Standard Word usually uses "List Bullet", "List Bullet 2", etc.
+# LIST_MAP = ["List Bullet", "List Bullet 2", "List Bullet 3", "List Bullet 4", "List Bullet 5"]
+
 
 # ==========================================
-# STEP 1: CONVERT MASTER DOCX TO MARKDOWN
+# END OF CONFIGURATION
 # ==========================================
+
 def extract_master_to_markdown(docx_path, md_path):
     """
-    Reads the Master Docx and attempts to create the custom Markdown.
-    NOTE: This assumes the Master Docx has the "A." "1." typed out 
-    or detectable as text. If they are auto-numbered lists, 
-    python-docx reads them as empty text.
+    Step 1: Extract content to Markdown (No changes needed here)
     """
     if not os.path.exists(docx_path):
         print(f"❌ Error: Master file {docx_path} not found.")
@@ -36,67 +56,32 @@ def extract_master_to_markdown(docx_path, md_path):
 
     for para in doc.paragraphs:
         text = para.text.strip()
-        if not text:
-            continue
+        if not text: continue
 
-        # --- LOGIC TO DETECT HIERARCHY ---
-        
-        # 1. Section Titles (Start with SECTION)
+        # Regex detection for CSI Structure
         if text.upper().startswith("SECTION"):
             md_lines.append(f"# {text}")
-            
-        # 2. Parts (PART 1 - GENERAL)
         elif text.upper().startswith("PART") and "-" in text:
             md_lines.append(f"\n## {text}")
-            
-        # 3. Articles (1.01 SUMMARY) -> Regex for digit.digit
         elif re.match(r'^\d+\.\d+\s', text):
             md_lines.append(f"\n### {text}")
-            
-        # 4. Paragraph Levels (The hard part - detecting A. 1. a.)
-        # We check the start of the string to assign indentation depth
         else:
-            # Level 1: A. B. C.
-            if re.match(r'^[A-Z]\.\s', text):
-                md_lines.append(f"- {text}")
-            
-            # Level 2: 1. 2. 3.
-            elif re.match(r'^\d+\.\s', text):
-                md_lines.append(f"  - {text}")
-                
-            # Level 3: a. b. c.
-            elif re.match(r'^[a-z]\.\s', text):
-                md_lines.append(f"    - {text}")
-                
-            # Level 4: 1) 2)
-            elif re.match(r'^\d+\)\s', text):
-                md_lines.append(f"      - {text}")
-                
-            # Level 5: a) b)
-            elif re.match(r'^[a-z]\)\s', text):
-                md_lines.append(f"        - {text}")
-                
-            # Level 6: 1) 2) (Nested deeper, unlikely but possible)
-            # Since 1) matches Level 4 regex, context matters, but for raw extraction:
-            else:
-                # Fallback for standard text or unformatted lines
-                # We assume it belongs to the previous level or is a note
-                md_lines.append(f"  {text}")
+            # Indentation Detection
+            if re.match(r'^[A-Z]\.\s', text):       md_lines.append(f"- {text}")     # Level 0
+            elif re.match(r'^\d+\.\s', text):       md_lines.append(f"  - {text}")   # Level 1
+            elif re.match(r'^[a-z]\.\s', text):     md_lines.append(f"    - {text}") # Level 2
+            elif re.match(r'^\d+\)\s', text):       md_lines.append(f"      - {text}") # Level 3
+            elif re.match(r'^[a-z]\)\s', text):     md_lines.append(f"        - {text}") # Level 4
+            else:                                   md_lines.append(f"  {text}")     # Default text
 
-    # Write to Markdown file
     with open(md_path, "w", encoding="utf-8") as f:
         f.write("\n".join(md_lines))
-    
     print(f"   Converted to Markdown: {md_path}")
 
 
-# ==========================================
-# STEP 2: REBUILD DOCX USING TEMPLATE
-# ==========================================
 def rebuild_from_markdown(md_path, template_path, output_path):
     """
-    Takes the custom Markdown and injects it into the Architect's template.
-    It strictly enforces indentation based on the dash hierarchy.
+    Step 2: Rebuild using the Configuration Map
     """
     if not os.path.exists(template_path):
         print(f"❌ Error: Template {template_path} not found.")
@@ -104,90 +89,64 @@ def rebuild_from_markdown(md_path, template_path, output_path):
 
     print(f"2️⃣  Applying styles from {template_path}...")
     
-    # Load Architect's Doc
     doc = Document(template_path)
     
-    # CLEAR BODY CONTENT
-    # This keeps margins, headers, footers, and styles intact
+    # Clean Body
     for element in list(doc.element.body):
-        # Don't delete section properties (sectPr) which hold margins/headers
-        if element.tag.endswith('sectPr'):
-            continue
+        if element.tag.endswith('sectPr'): continue
         doc.element.body.remove(element)
 
-    # Read the Markdown
     with open(md_path, "r", encoding="utf-8") as f:
         lines = f.readlines()
 
-    # Process Line by Line
-    for line in lines:
-        raw_text = line.rstrip() # Keep leading spaces, remove trailing newline
-        stripped_text = raw_text.strip()
-        
-        if not stripped_text:
-            continue
+    # Helper function to safely add paragraph with fallback
+    def add_safe_paragraph(text, style_name):
+        try:
+            doc.add_paragraph(text, style=style_name)
+        except KeyError:
+            print(f"⚠️  WARNING: Style '{style_name}' not found in template. Using 'Normal'.")
+            doc.add_paragraph(text, style='Normal')
+        except Exception as e:
+            print(f"❌ Error adding text '{text[:20]}...': {e}")
 
-        # --- HEADING LOGIC ---
+    # Process Lines
+    for line in lines:
+        raw_text = line.rstrip()
+        stripped_text = raw_text.strip()
+        if not stripped_text: continue
+
+        # --- HEADERS (Using STYLE_MAP) ---
         if stripped_text.startswith("# "):
-            doc.add_heading(stripped_text.replace("# ", ""), level=1)
+            add_safe_paragraph(stripped_text.replace("# ", ""), STYLE_MAP["Title"])
             
         elif stripped_text.startswith("## "):
-            doc.add_heading(stripped_text.replace("## ", ""), level=2)
+            add_safe_paragraph(stripped_text.replace("## ", ""), STYLE_MAP["Part"])
             
         elif stripped_text.startswith("### "):
-            doc.add_heading(stripped_text.replace("### ", ""), level=3)
+            add_safe_paragraph(stripped_text.replace("### ", ""), STYLE_MAP["Article"])
 
-        # --- LIST LOGIC (The "Embedded Label" System) ---
+        # --- LISTS (Using LIST_MAP) ---
         elif stripped_text.startswith("- "):
-            # Calculate Indent Level based on leading spaces in raw_text
-            # We look for the position of the dash
             dash_index = raw_text.find("-")
-            
-            # 2 spaces per level logic
-            # 0 spaces = Level 0 (A.)
-            # 2 spaces = Level 1 (1.)
-            # 4 spaces = Level 2 (a.)
             indent_level = dash_index // 2 
-            
-            # Clean the text (Remove "- " but keep "A. Text")
-            content = stripped_text[2:] 
-            
-            # Create a 'Normal' paragraph (inherits Font from Architect)
-            p = doc.add_paragraph(content)
-            
-            # FORCE INDENTATION
-            # We manually push the left indent based on the level.
-            # We use a "hanging indent" so if text wraps, it looks nice.
-            p_format = p.paragraph_format
-            
-            # Math: 
-            # Level 0: 0.0" Indent
-            # Level 1: 0.5" Indent
-            # Level 2: 1.0" Indent
-            indent_amount = Inches(indent_level * INDENT_PER_LEVEL)
-            
-            p_format.left_indent = indent_amount
-            
-            # Optional: Add a hanging indent (first line sticks out)
-            # This makes "A." stick out and the text wrap aligned
-            p_format.first_line_indent = Inches(-0.25)
-            # We have to increase left_indent slightly to compensate for the hang
-            p_format.left_indent = indent_amount + Inches(0.25)
+            clean_text = stripped_text[2:]
 
-        # --- STANDARD TEXT / UNKNOWN ---
+            # Pick the correct style from the list
+            if indent_level < len(LIST_MAP):
+                target_style = LIST_MAP[indent_level]
+            else:
+                # If nested deeper than our map, use the last available style
+                target_style = LIST_MAP[-1]
+            
+            add_safe_paragraph(clean_text, target_style)
+
+        # --- STANDARD TEXT ---
         else:
-            doc.add_paragraph(stripped_text, style='Normal')
+            add_safe_paragraph(stripped_text, 'Normal')
 
     doc.save(output_path)
     print(f"✅ Success! Generated: {output_path}")
 
-# ==========================================
-# EXECUTION
-# ==========================================
 if __name__ == "__main__":
-    # Ensure you have these files in the folder before running
-    # 1. office_master.docx
-    # 2. architect_style.docx
-    
     extract_master_to_markdown(INPUT_MASTER, TEMP_MARKDOWN)
     rebuild_from_markdown(TEMP_MARKDOWN, ARCHITECT_TEMPLATE, OUTPUT_FILE)
