@@ -341,9 +341,9 @@ class SpecToolApp:
                 if rebuild_from_markdown(temp_md_path, template_path, final_docx_path, config, self.log):
                     self.log(f"   ✅ Done.")
                 
-                # Cleanup Temp
-                if os.path.exists(temp_md_path):
-                    os.remove(temp_md_path)
+                # # Cleanup Temp
+                # if os.path.exists(temp_md_path):
+                #     os.remove(temp_md_path)
             
             self.progress["value"] = i + 1
             self.root.update_idletasks()
