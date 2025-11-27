@@ -40,9 +40,44 @@ def extract_master_to_markdown(docx_path, md_path, log_func):
         doc = Document(docx_path)
         md_lines = []
 
+        # 🚫 STYLES TO IGNORE (Customize this list!)
+        # Check your master file to see what the notes are called.
+        IGNORED_STYLES = [
+            "Specifier Note", 
+            "Note", 
+            "Instruction", 
+            "Editing Instruction", 
+            'CMT'
+        ]
+
+        # 🚫 KEYWORDS TO SKIP (Backup if styles are messy)
+        # If a line starts with these, we skip it.
+        IGNORED_STARTS = [
+            "See Editing Instruction",
+            "Adjust list below",
+            "Retain ",
+            "Delete ",
+            "Edit ",
+            "Verify that Section titles"
+        ]
+
         for para in doc.paragraphs:
             text = para.text.strip()
             if not text: continue
+
+            # CHECK 1: Is it an ignored style?
+            if para.style.name in IGNORED_STYLES:
+                continue
+
+            # CHECK 2: Does it look like an instruction? (Keyword check)
+            # (Only use this if styles aren't working perfectly)
+            is_instruction = False
+            for keyword in IGNORED_STARTS:
+                if text.startswith(keyword):
+                    is_instruction = True
+                    break
+            if is_instruction:
+                continue
 
             # Regex detection for CSI Structure
             if text.upper().startswith("SECTION"):
