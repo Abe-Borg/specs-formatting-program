@@ -1,0 +1,18 @@
+{
+    "styles": {
+        "Title": "CSILevel0",
+        "Part": "CSILevel1",
+        "Article": "CSILevel2"
+    },
+    "list_levels": [
+        "CSILevel3", 
+        "CSILevel4", 
+        "CSILevel5", 
+        "CSILevel6", 
+        "CSILevel7"
+    ],
+    "options": {
+        "strip_heading_numbers": true,
+        "strip_list_labels": true
+    }
+}
