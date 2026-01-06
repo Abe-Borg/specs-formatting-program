@@ -24,6 +24,38 @@ DEFAULT_CONFIG = {
 }
 
 def load_config(config_path):
+    """
+    Load style mapping configuration from JSON file.
+    
+    Loads a project-specific configuration file that defines how CSI document
+    structure elements (Title, Part, Article, Lists) map to Word style names
+    in the architect's template.
+    
+    Args:
+        config_path (str): Path to the JSON configuration file. Can be None or
+                          empty string to use defaults.
+    
+    Returns:
+        dict: Configuration dictionary containing:
+            - styles (dict): Mapping of document elements to style names
+                - Title: Style for section headers (e.g., "SECTION 23 21 13")
+                - Part: Style for part headers (e.g., "PART 1 - GENERAL")
+                - Article: Style for article headers (e.g., "1.01 SUMMARY")
+            - list_levels (list): Ordered list of style names for nested lists
+            - options (dict): Processing options
+                - strip_heading_numbers (bool): Remove "1.01" from headings
+                - strip_list_labels (bool): Remove "A." from list items
+    
+    Example:
+        >>> config = load_config("project_config.json")
+        >>> print(config['styles']['Title'])
+        'CSILevel0'
+    
+    Notes:
+        - Returns DEFAULT_CONFIG if path is None, empty, or file doesn't exist
+        - Returns DEFAULT_CONFIG if JSON parsing fails
+        - No error is raised on failure; defaults are silently used
+    """
     if config_path and os.path.exists(config_path):
         try:
             with open(config_path, 'r') as f:
@@ -33,6 +65,47 @@ def load_config(config_path):
     return DEFAULT_CONFIG
 
 def extract_master_to_markdown(docx_path, md_path, log_func):
+    """
+    Extract content from office master Word document to markdown format.
+
+    Reads a Word document and converts it to markdown while intelligently filtering
+    out specifier notes, editing instructions, and other non-specification content
+    that should not appear in the final document.
+
+    Args:
+        docx_path (str): Full path to the source Word document (office master spec).
+        md_path (str): Full path where the markdown file will be saved.
+        log_func (callable): Function to call for logging messages (e.g., print or GUI logger).
+
+    Returns:
+        bool: True if extraction succeeded, False if file not found or error occurred.
+
+    Filtering Rules:
+        - Removes paragraphs with styles: "Specifier Note", "Note", "Instruction", 
+        "Editing Instruction", "CMT"
+        - Removes paragraphs starting with: "See Editing Instruction", "Adjust list below",
+        "Retain ", "Delete ", "Edit ", "Verify that Section titles"
+        - Empty paragraphs are skipped
+
+    Markdown Conversion:
+        - Section headers (starting with "SECTION") → # Header
+        - Part headers (starting with "PART" containing "-") → ## Header  
+        - Article headers (pattern: digit.digit space) → ### Header
+        - Lists with standard CSI indentation patterns (A., 1., a., 1), a))
+        - All other text becomes body content with 2-space indent
+
+    Example:
+        >>> extract_master_to_markdown(
+        ...     "masters/23 21 13.docx", 
+        ...     "temp/23 21 13.md", 
+        ...     print
+        ... )
+        True
+
+    Notes:
+        - Customizable via IGNORED_STYLES and IGNORED_STARTS lists within function
+        - Output encoding is UTF-8
+    """
     if not os.path.exists(docx_path):
         return False
 
@@ -103,6 +176,58 @@ def extract_master_to_markdown(docx_path, md_path, log_func):
         return False
 
 def rebuild_from_markdown(md_path, template_path, output_path, config, log_func):
+    """
+    Rebuild Word document from markdown using architect's template formatting.
+
+    Takes a markdown file and reconstructs it as a properly formatted Word document
+    using style definitions from the architect's template. Preserves the template's
+    page layout, margins, headers, footers, and section properties while replacing
+    all content.
+
+    Args:
+        md_path (str): Path to the markdown file containing extracted content.
+        template_path (str): Path to the architect's Word template (.docx) with target styles.
+        output_path (str): Path where the formatted Word document will be saved.
+        config (dict): Configuration dictionary from load_config() containing style mappings,
+                    list levels, and processing options.
+        log_func (callable): Function to call for logging messages (e.g., print or GUI logger).
+
+    Returns:
+        bool: True if rebuild succeeded, False if template not found or error occurred.
+
+    Processing Logic:
+        - Clears template body while preserving sectPr (section properties)
+        - Maps markdown headers (#, ##, ###) to configured Word styles
+        - Maps markdown list indentation to configured list level styles
+        - Optionally strips heading numbers and list labels based on config
+        - Handles special case: "END OF SECTION" uses Title style
+        - Falls back to 'Normal' style if configured style doesn't exist
+
+    Markdown to Word Mapping:
+        - "# text" → Title style (Section headers)
+        - "## text" → Part style (Part headers)
+        - "### text" → Article style (Article headers)
+        - "- text" at column 0 → list_levels[0]
+        - "  - text" at column 2 → list_levels[1]
+        - "    - text" at column 4 → list_levels[2]
+        - (etc. for deeper indentation)
+
+    Example:
+        >>> config = load_config("project_config.json")
+        >>> rebuild_from_markdown(
+        ...     "temp/23 21 13.md",
+        ...     "architect_template.docx",
+        ...     "output/23 21 13.docx",
+        ...     config,
+        ...     print
+        ... )
+        True
+
+    Notes:
+        - Indent level calculated as: dash_index // 2
+        - Uses three nested helper functions for safe paragraph creation and label cleaning
+        - Preserves template's document-level properties (margins, page size, etc.)
+    """
     if not os.path.exists(template_path):
         log_func(f"❌ Template not found: {template_path}")
         return False
@@ -207,6 +332,36 @@ def rebuild_from_markdown(md_path, template_path, output_path, config, log_func)
 
 class SpecToolApp:
     def __init__(self, root):
+        """
+        Initialize the Spec Automation Tool GUI application.
+
+        Sets up the main application window, configures styling, and initializes
+        all tkinter variables needed to store user inputs.
+
+        Args:
+            root (tk.Tk): The root Tkinter window object.
+
+        Attributes Created:
+            self.root (tk.Tk): Reference to the root window.
+            self.master_folder (tk.StringVar): Path to office masters folder.
+            self.template_file (tk.StringVar): Path to architect's template file.
+            self.config_file (tk.StringVar): Path to project configuration JSON.
+            self.output_folder (tk.StringVar): Path to output directory.
+
+        Window Configuration:
+            - Title: "Spec Automation Tool"
+            - Size: 700x550 pixels
+            - Theme: 'clam' (ttk style)
+
+        Side Effects:
+            - Calls create_widgets() to build the GUI layout
+            - Sets window title and geometry
+
+        Example:
+            >>> root = tk.Tk()
+            >>> app = SpecToolApp(root)
+            >>> root.mainloop()
+        """
         self.root = root
         self.root.title("Spec Automation Tool")
         self.root.geometry("700x550")
@@ -224,6 +379,49 @@ class SpecToolApp:
         self.create_widgets()
 
     def create_widgets(self):
+        """
+        Build and layout all GUI components for the application.
+
+        Creates the complete user interface with input fields, browse buttons,
+        action controls, progress indicator, and logging area. Organizes components
+        into logical frames for clean visual hierarchy.
+
+        GUI Structure:
+            - Input Frame: Project settings with 4 file/folder selection rows
+            - Action Frame: Process button and progress bar
+            - Log Frame: Scrollable text area for real-time feedback
+
+        Components Created:
+            Input Frame (LabelFrame):
+                - Row 0: Office Masters Folder (Entry + Browse button)
+                - Row 1: Architect Template .docx (Entry + Browse button)
+                - Row 2: Project Config .json (Entry + Browse button)
+                - Row 3: Output Folder (Entry + Browse button)
+            
+            Action Frame (Frame):
+                - Run button: "🚀 PROCESS ALL SPECS" (calls start_processing)
+                - Progress bar: Horizontal determinate progressbar
+            
+            Log Frame (LabelFrame):
+                - Scrollable text area (disabled state for read-only display)
+
+        Layout:
+            - All frames use pack() geometry manager
+            - Input frame: fill="x" (horizontal expansion)
+            - Log frame: fill="both", expand=True (takes remaining space)
+            - Grid used within input frame for aligned rows
+
+        Side Effects:
+            - Creates self.run_btn (stored for enable/disable control)
+            - Creates self.progress (for updating during batch processing)
+            - Creates self.log_area (for writing processing messages)
+
+        Args:
+            None (operates on self)
+
+        Returns:
+            None
+        """
         # --- INPUTS FRAME ---
         input_frame = ttk.LabelFrame(self.root, text="Project Settings", padding="10")
         input_frame.pack(fill="x", padx=10, pady=5)
@@ -267,22 +465,151 @@ class SpecToolApp:
 
     # --- BROWSE FUNCTIONS ---
     def browse_master(self):
+        """
+        Open folder browser dialog for selecting office masters folder.
+
+        Launches a directory selection dialog and updates the master_folder
+        StringVar with the selected path.
+
+        Side Effects:
+            - Opens native OS folder browser dialog
+            - Sets self.master_folder to selected path (if user doesn't cancel)
+
+        Args:
+            None (operates on self)
+
+        Returns:
+            None
+
+        Example Flow:
+            User clicks "Browse..." next to "Office Masters Folder"
+            → Dialog opens
+            → User selects folder containing master .docx files
+            → Path appears in entry field
+        """
         path = filedialog.askdirectory()
         if path: self.master_folder.set(path)
 
     def browse_template(self):
+        """
+        Open file browser dialog for selecting architect's template document.
+
+        Launches a file selection dialog filtered to show only Word documents (.docx)
+        and updates the template_file StringVar with the selected path.
+
+        File Filter:
+            - Only .docx files are shown in the dialog
+
+        Side Effects:
+            - Opens native OS file browser dialog
+            - Sets self.template_file to selected path (if user doesn't cancel)
+
+        Args:
+            None (operates on self)
+
+        Returns:
+            None
+
+        Example Flow:
+            User clicks "Browse..." next to "Architect Template (.docx)"
+            → Dialog opens showing only .docx files
+            → User selects architect's template file
+            → Path appears in entry field
+        """
         path = filedialog.askopenfilename(filetypes=[("Word Documents", "*.docx")])
         if path: self.template_file.set(path)
 
     def browse_config(self):
+        """
+        Open file browser dialog for selecting project configuration JSON file.
+
+        Launches a file selection dialog filtered to show only JSON files (.json)
+        and updates the config_file StringVar with the selected path.
+
+        File Filter:
+            - Only .json files are shown in the dialog
+
+        Side Effects:
+            - Opens native OS file browser dialog
+            - Sets self.config_file to selected path (if user doesn't cancel)
+
+        Args:
+            None (operates on self)
+
+        Returns:
+            None
+
+        Example Flow:
+            User clicks "Browse..." next to "Project Config (.json)"
+            → Dialog opens showing only .json files
+            → User selects project_config.json
+            → Path appears in entry field
+
+        Notes:
+            - Configuration file is optional; defaults will be used if not provided
+        """
         path = filedialog.askopenfilename(filetypes=[("JSON Config", "*.json")])
         if path: self.config_file.set(path)
 
     def browse_output(self):
+        """
+        Open folder browser dialog for selecting output destination folder.
+
+        Launches a directory selection dialog and updates the output_folder
+        StringVar with the selected path where formatted specifications will be saved.
+
+        Side Effects:
+            - Opens native OS folder browser dialog
+            - Sets self.output_folder to selected path (if user doesn't cancel)
+
+        Args:
+            None (operates on self)
+
+        Returns:
+            None
+
+        Example Flow:
+            User clicks "Browse..." next to "Output Folder"
+            → Dialog opens
+            → User selects destination folder for formatted specs
+            → Path appears in entry field
+
+        Notes:
+            - Folder should exist or be creatable by the user
+            - Formatted files will be named "Formatted_{original_filename}"
+        """
         path = filedialog.askdirectory()
         if path: self.output_folder.set(path)
 
     def log(self, message):
+        """
+        Write a message to the GUI log window.
+
+        Appends a message to the scrollable log text area with automatic scrolling
+        to show the latest entry. Temporarily enables the text widget for writing,
+        then disables it again to maintain read-only behavior.
+
+        Args:
+            message (str): The message to display in the log window.
+
+        Side Effects:
+            - Enables log_area text widget
+            - Appends message with newline to log_area
+            - Scrolls log_area to show the newest entry
+            - Disables log_area to prevent user editing
+
+        Returns:
+            None
+
+        Example:
+            >>> self.log("✅ Processing complete")
+            >>> self.log("❌ Error: File not found")
+
+        Notes:
+            - Text area state toggles: disabled → normal → disabled
+            - Automatically adds newline after each message
+            - Used by both GUI thread and processing thread
+        """
         self.log_area.config(state='normal')
         self.log_area.insert(tk.END, message + "\n")
         self.log_area.see(tk.END)
@@ -290,6 +617,40 @@ class SpecToolApp:
 
     # --- PROCESSING LOGIC ---
     def start_processing(self):
+        """
+        Validate user inputs and launch batch processing in separate thread.
+
+        Performs input validation to ensure all required paths are provided, then
+        spawns a daemon thread to run the batch processing without freezing the GUI.
+
+        Validation:
+            - Checks that master_folder is set
+            - Checks that template_file is set
+            - Checks that output_folder is set
+            - Config file is optional (will use defaults if not provided)
+
+        Side Effects:
+            - Shows error messagebox if validation fails
+            - Creates and starts daemon thread running run_batch()
+            - Thread continues even if main GUI closes (daemon=True)
+
+        Args:
+            None (operates on self)
+
+        Returns:
+            None (returns early if validation fails)
+
+        Example Flow:
+            User clicks "🚀 PROCESS ALL SPECS"
+            → Validation runs
+            → If valid: Background thread starts, GUI remains responsive
+            → If invalid: Error dialog shows, no processing occurs
+
+        Threading:
+            - Uses threading.Thread with daemon=True
+            - Keeps GUI responsive during long batch operations
+            - Log messages from thread appear in real-time
+        """
         # Validate Inputs
         if not all([self.master_folder.get(), self.template_file.get(), self.output_folder.get()]):
             messagebox.showerror("Error", "Please select Master Folder, Template, and Output Folder.")
@@ -299,6 +660,63 @@ class SpecToolApp:
         threading.Thread(target=self.run_batch, daemon=True).start()
 
     def run_batch(self):
+        """
+        Execute batch processing of all specifications in a background thread.
+
+        Main processing loop that finds all Word documents in the masters folder,
+        extracts each to markdown, rebuilds with template formatting, and tracks
+        progress. Runs in a separate thread to keep the GUI responsive.
+
+        Process Flow:
+            1. Disable the run button to prevent concurrent execution
+            2. Load configuration file (or use defaults)
+            3. Scan masters folder for .docx files (excluding temp files)
+            4. For each file:
+                a. Extract master to markdown (filtered)
+                b. Rebuild from markdown using template
+                c. Update progress bar
+            5. Show completion messagebox
+            6. Re-enable run button
+
+        File Handling:
+            - Processes all .docx files in masters_dir
+            - Excludes temporary Word files (starting with "~$")
+            - Creates temporary markdown files in output_dir
+            - Generates final files named "Formatted_{original_name}"
+            - Temporary .md files are left in place (line 237 cleanup is commented)
+
+        Progress Tracking:
+            - Sets progress bar maximum to total file count
+            - Increments progress bar after each file
+            - Updates GUI with root.update_idletasks()
+
+        Side Effects:
+            - Disables run_btn at start, re-enables at end
+            - Writes multiple log messages during processing
+            - Creates temporary .md files in output folder
+            - Creates formatted .docx files in output folder
+            - Shows "Done" messagebox when complete
+
+        Args:
+            None (operates on self, reads instance variables)
+
+        Returns:
+            None (may return early if no files found)
+
+        Threading Context:
+            - Called by thread spawned in start_processing()
+            - Safe to call log() and update progress bar from thread
+            - Uses root.update_idletasks() for thread-safe GUI updates
+
+        Example Log Output:
+            --- Starting Batch Process ---
+            ✅ Config loaded successfully.
+            Processing: 23 21 13.docx...
+            ✅ Done.
+            Processing: 23 33 00.docx...
+            ✅ Done.
+            --- Batch Complete ---
+        """
         self.run_btn.config(state="disabled")
         self.log("--- Starting Batch Process ---")
         
